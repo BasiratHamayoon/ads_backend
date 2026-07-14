@@ -1,5 +1,4 @@
 const mongoose = require('mongoose');
-const slugify = require('slugify');
 
 const categorySchema = new mongoose.Schema(
   {
@@ -59,15 +58,6 @@ const categorySchema = new mongoose.Schema(
   }
 );
 
-// Generate slug before saving
-categorySchema.pre('save', function (next) {
-  if (this.isModified('name')) {
-    this.slug = slugify(this.name, { lower: true, strict: true });
-  }
-  next();
-});
-
-// Virtual populate - get jobs in this category
 categorySchema.virtual('jobs', {
   ref: 'JobAd',
   localField: '_id',

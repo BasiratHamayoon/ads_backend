@@ -1,7 +1,6 @@
 const mongoose = require('mongoose');
-const slugify = require('slugify');
 
-const jobAdSchema = new mongoose.Schema(
+var jobAdSchema = new mongoose.Schema(
   {
     title: {
       type: String,
@@ -24,8 +23,6 @@ const jobAdSchema = new mongoose.Schema(
       ref: 'Category',
       required: [true, 'Category is required']
     },
-    
-    // Source information (where the ad was taken from)
     source: {
       websiteName: {
         type: String,
@@ -43,8 +40,6 @@ const jobAdSchema = new mongoose.Schema(
         trim: true
       }
     },
-
-    // Company details
     company: {
       name: {
         type: String,
@@ -66,8 +61,6 @@ const jobAdSchema = new mongoose.Schema(
         default: ''
       }
     },
-
-    // Job details
     location: {
       city: {
         type: String,
@@ -89,19 +82,16 @@ const jobAdSchema = new mongoose.Schema(
         default: false
       }
     },
-
     jobType: {
       type: String,
       enum: ['full-time', 'part-time', 'contract', 'internship', 'freelance', 'temporary'],
       default: 'full-time'
     },
-
     experienceLevel: {
       type: String,
       enum: ['entry', 'mid', 'senior', 'executive', 'any'],
       default: 'any'
     },
-
     salary: {
       min: {
         type: Number,
@@ -120,18 +110,14 @@ const jobAdSchema = new mongoose.Schema(
         default: false
       }
     },
-
     qualifications: {
       type: [String],
       default: []
     },
-
     skills: {
       type: [String],
       default: []
     },
-
-    // Ad image/banner
     image: {
       url: {
         type: String,
@@ -142,76 +128,59 @@ const jobAdSchema = new mongoose.Schema(
         default: ''
       }
     },
-
-    // Additional images (multiple ad screenshots)
     gallery: [
       {
         url: String,
         publicId: String
       }
     ],
-
-    // Application details
     applicationDeadline: {
       type: Date,
       default: null
     },
-
     applicationMethod: {
       type: String,
       enum: ['email', 'website', 'phone', 'walk-in', 'online-form', 'other'],
       default: 'website'
     },
-
     applicationLink: {
       type: String,
       default: ''
     },
-
     contactEmail: {
       type: String,
       default: ''
     },
-
     contactPhone: {
       type: String,
       default: ''
     },
-
-    // Meta
     status: {
       type: String,
       enum: ['active', 'inactive', 'expired', 'draft'],
       default: 'active'
     },
-
     isFeatured: {
       type: Boolean,
       default: false
     },
-
     isUrgent: {
       type: Boolean,
       default: false
     },
-
     views: {
       type: Number,
       default: 0
     },
-
     tags: {
       type: [String],
       default: []
     },
-
     postedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Admin',
       required: true
     },
-
-    // SEO
     metaTitle: {
       type: String,
       default: ''
@@ -228,9 +197,7 @@ const jobAdSchema = new mongoose.Schema(
   }
 );
 
-// Indexes for performance
 jobAdSchema.index({ category: 1, status: 1 });
-jobAdSchema.index({ slug: 1 });
 jobAdSchema.index({ status: 1, createdAt: -1 });
 jobAdSchema.index({ isFeatured: 1, status: 1 });
 jobAdSchema.index({ tags: 1 });
@@ -238,25 +205,11 @@ jobAdSchema.index({ 'location.city': 1 });
 jobAdSchema.index({ jobType: 1 });
 jobAdSchema.index({ title: 'text', description: 'text', tags: 'text' });
 
-// Generate slug before saving
-jobAdSchema.pre('save', function (next) {
-  if (this.isModified('title')) {
-    this.slug = slugify(this.title, { lower: true, strict: true }) + '-' + Date.now();
-  }
-  next();
-});
-
-// Check if job is expired
 jobAdSchema.virtual('isExpired').get(function () {
   if (this.applicationDeadline) {
     return new Date() > this.applicationDeadline;
   }
   return false;
-});
-
-// Auto-expire jobs
-jobAdSchema.pre('find', function () {
-  // This runs before every find query - can be used for auto-expiry logic
 });
 
 module.exports = mongoose.model('JobAd', jobAdSchema);

@@ -1,17 +1,35 @@
-const JobAd = require('../models/JobAd');
-const Category = require('../models/Category');
-const APIFeatures = require('../utils/apiFeatures');
-const { uploadFromBuffer, deleteFromCloudinary } = require('../config/cloudinary');
+var JobAd = require('../models/JobAd');
+var Category = require('../models/Category');
+var APIFeatures = require('../utils/apiFeatures');
+var cloudinaryConfig = require('../config/cloudinary');
+var uploadFromBuffer = cloudinaryConfig.uploadFromBuffer;
+var deleteFromCloudinary = cloudinaryConfig.deleteFromCloudinary;
 
-// @desc    Create job ad
-// @route   POST /api/v1/job-ads
-// @access  Private (Admin)
-const createJobAd = async (req, res) => {
+var createSlug = function (text) {
+  return text
+    .toString()
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^\w\-]+/g, '')
+    .replace(/\-\-+/g, '-')
+    .replace(/^-+/, '')
+    .replace(/-+$/, '')
+    + '-' + Date.now();
+};
+
+var updateCategoryJobCount = async function (categoryId) {
+  var count = await JobAd.countDocuments({
+    category: categoryId,
+    status: 'active'
+  });
+  await Category.findByIdAndUpdate(categoryId, { jobCount: count });
+};
+
+var createJobAd = async function (req, res) {
   try {
-    // Parse JSON fields from form-data
-    let jobData = { ...req.body };
-    
-    // Parse nested objects if they come as strings (from form-data)
+    var jobData = Object.assign({}, req.body);
+
     if (typeof jobData.source === 'string') jobData.source = JSON.parse(jobData.source);
     if (typeof jobData.company === 'string') jobData.company = JSON.parse(jobData.company);
     if (typeof jobData.location === 'string') jobData.location = JSON.parse(jobData.location);
@@ -20,8 +38,7 @@ const createJobAd = async (req, res) => {
     if (typeof jobData.skills === 'string') jobData.skills = JSON.parse(jobData.skills);
     if (typeof jobData.tags === 'string') jobData.tags = JSON.parse(jobData.tags);
 
-    // Verify category exists
-    const category = await Category.findById(jobData.category);
+    var category = await Category.findById(jobData.category);
     if (!category) {
       return res.status(404).json({
         success: false,
@@ -30,54 +47,32 @@ const createJobAd = async (req, res) => {
     }
 
     jobData.postedBy = req.admin._id;
+    jobData.slug = createSlug(jobData.title);
 
-    // Handle main image upload
     if (req.files && req.files.image && req.files.image[0]) {
-      const result = await uploadFromBuffer(
-        req.files.image[0].buffer,
-        'job-ads-aggregator/job-ads'
-      );
-      jobData.image = {
-        url: result.secure_url,
-        publicId: result.public_id
-      };
+      var imageResult = await uploadFromBuffer(req.files.image[0].buffer, 'job-ads-aggregator/job-ads');
+      jobData.image = { url: imageResult.secure_url, publicId: imageResult.public_id };
     }
 
-    // Handle company logo upload
     if (req.files && req.files.companyLogo && req.files.companyLogo[0]) {
-      const result = await uploadFromBuffer(
-        req.files.companyLogo[0].buffer,
-        'job-ads-aggregator/company-logos'
-      );
+      var logoResult = await uploadFromBuffer(req.files.companyLogo[0].buffer, 'job-ads-aggregator/company-logos');
       if (!jobData.company) jobData.company = {};
-      jobData.company.logo = {
-        url: result.secure_url,
-        publicId: result.public_id
-      };
+      jobData.company.logo = { url: logoResult.secure_url, publicId: logoResult.public_id };
     }
 
-    // Handle gallery images upload
     if (req.files && req.files.gallery && req.files.gallery.length > 0) {
       jobData.gallery = [];
-      for (const file of req.files.gallery) {
-        const result = await uploadFromBuffer(
-          file.buffer,
-          'job-ads-aggregator/job-ads/gallery'
-        );
-        jobData.gallery.push({
-          url: result.secure_url,
-          publicId: result.public_id
-        });
+      for (var i = 0; i < req.files.gallery.length; i++) {
+        var galleryResult = await uploadFromBuffer(req.files.gallery[i].buffer, 'job-ads-aggregator/job-ads/gallery');
+        jobData.gallery.push({ url: galleryResult.secure_url, publicId: galleryResult.public_id });
       }
     }
 
-    const jobAd = await JobAd.create(jobData);
+    var jobAd = await JobAd.create(jobData);
 
-    // Update category job count
     await updateCategoryJobCount(jobData.category);
 
-    // Populate the response
-    const populatedJobAd = await JobAd.findById(jobAd._id)
+    var populatedJobAd = await JobAd.findById(jobAd._id)
       .populate('category', 'name slug')
       .populate('postedBy', 'name email');
 
@@ -95,42 +90,37 @@ const createJobAd = async (req, res) => {
   }
 };
 
-// @desc    Get all job ads (with filters, search, pagination)
-// @route   GET /api/v1/job-ads
-// @access  Public
-const getAllJobAds = async (req, res) => {
+var getAllJobAds = async function (req, res) {
   try {
-    // Count total documents matching the filter (before pagination)
-    let countQuery = JobAd.find();
-    const countFeatures = new APIFeatures(countQuery, req.query).search().filter();
-    const totalCount = await JobAd.countDocuments(countFeatures.query.getFilter());
+    var countQuery = JobAd.find();
+    var countFeatures = new APIFeatures(countQuery, req.query).search().filter();
+    var totalCount = await JobAd.countDocuments(countFeatures.query.getFilter());
 
-    // Apply all features
-    let query = JobAd.find()
+    var query = JobAd.find()
       .populate('category', 'name slug icon')
       .populate('postedBy', 'name');
 
-    const features = new APIFeatures(query, req.query)
+    var features = new APIFeatures(query, req.query)
       .search()
       .filter()
       .sort()
       .limitFields()
       .paginate();
 
-    const jobAds = await features.query;
+    var jobAds = await features.query;
 
-    const page = features.page || 1;
-    const limit = features.limit || 12;
-    const totalPages = Math.ceil(totalCount / limit);
+    var page = features.page || 1;
+    var limit = features.limit || 12;
+    var totalPages = Math.ceil(totalCount / limit);
 
     res.status(200).json({
       success: true,
       message: 'Job ads fetched successfully',
       count: jobAds.length,
-      data: { jobAds },
+      data: { jobAds: jobAds },
       pagination: {
         currentPage: page,
-        totalPages,
+        totalPages: totalPages,
         totalItems: totalCount,
         itemsPerPage: limit,
         hasNextPage: page < totalPages,
@@ -146,45 +136,39 @@ const getAllJobAds = async (req, res) => {
   }
 };
 
-// @desc    Get job ads by category
-// @route   GET /api/v1/job-ads/category/:categoryId
-// @access  Public
-const getJobAdsByCategory = async (req, res) => {
+var getJobAdsByCategory = async function (req, res) {
   try {
-    const { categoryId } = req.params;
+    var categoryId = req.params.categoryId;
 
-    const category = await Category.findById(categoryId);
+    var category = await Category.findById(categoryId);
     if (!category) {
-      return res.status(404).json({
-        success: false,
-        message: 'Category not found'
-      });
+      return res.status(404).json({ success: false, message: 'Category not found' });
     }
 
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 12;
-    const skip = (page - 1) * limit;
+    var page = parseInt(req.query.page, 10) || 1;
+    var limit = parseInt(req.query.limit, 10) || 12;
+    var skip = (page - 1) * limit;
 
-    const filter = { category: categoryId, status: 'active' };
+    var filter = { category: categoryId, status: 'active' };
+    var totalCount = await JobAd.countDocuments(filter);
 
-    const totalCount = await JobAd.countDocuments(filter);
-    const jobAds = await JobAd.find(filter)
+    var jobAds = await JobAd.find(filter)
       .populate('category', 'name slug icon')
       .populate('postedBy', 'name')
       .sort('-createdAt')
       .skip(skip)
       .limit(limit);
 
-    const totalPages = Math.ceil(totalCount / limit);
+    var totalPages = Math.ceil(totalCount / limit);
 
     res.status(200).json({
       success: true,
-      message: `Job ads for category "${category.name}" fetched successfully`,
+      message: 'Job ads for category fetched successfully',
       count: jobAds.length,
-      data: { category, jobAds },
+      data: { category: category, jobAds: jobAds },
       pagination: {
         currentPage: page,
-        totalPages,
+        totalPages: totalPages,
         totalItems: totalCount,
         itemsPerPage: limit,
         hasNextPage: page < totalPages,
@@ -192,118 +176,77 @@ const getJobAdsByCategory = async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch job ads by category',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Failed to fetch job ads by category', error: error.message });
   }
 };
 
-// @desc    Get single job ad by ID
-// @route   GET /api/v1/job-ads/:id
-// @access  Public
-const getJobAdById = async (req, res) => {
+var getJobAdById = async function (req, res) {
   try {
-    const jobAd = await JobAd.findById(req.params.id)
+    var jobAd = await JobAd.findById(req.params.id)
       .populate('category', 'name slug icon')
       .populate('postedBy', 'name email');
 
     if (!jobAd) {
-      return res.status(404).json({
-        success: false,
-        message: 'Job ad not found'
-      });
+      return res.status(404).json({ success: false, message: 'Job ad not found' });
     }
 
-    // Increment views
-    jobAd.views += 1;
-    await jobAd.save({ validateBeforeSave: false });
+    jobAd.views = jobAd.views + 1;
+    await jobAd.save();
 
-    // Get related jobs (same category, exclude current)
-    const relatedJobs = await JobAd.find({
+    var relatedJobs = await JobAd.find({
       category: jobAd.category._id,
       _id: { $ne: jobAd._id },
       status: 'active'
-    })
-      .select('title slug company.name location jobType image createdAt')
-      .limit(5)
-      .sort('-createdAt');
+    }).select('title slug company.name location jobType image createdAt').limit(5).sort('-createdAt');
 
     res.status(200).json({
       success: true,
       message: 'Job ad fetched successfully',
-      data: { jobAd, relatedJobs }
+      data: { jobAd: jobAd, relatedJobs: relatedJobs }
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch job ad',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Failed to fetch job ad', error: error.message });
   }
 };
 
-// @desc    Get job ad by slug
-// @route   GET /api/v1/job-ads/slug/:slug
-// @access  Public
-const getJobAdBySlug = async (req, res) => {
+var getJobAdBySlug = async function (req, res) {
   try {
-    const jobAd = await JobAd.findOne({ slug: req.params.slug })
+    var jobAd = await JobAd.findOne({ slug: req.params.slug })
       .populate('category', 'name slug icon')
       .populate('postedBy', 'name email');
 
     if (!jobAd) {
-      return res.status(404).json({
-        success: false,
-        message: 'Job ad not found'
-      });
+      return res.status(404).json({ success: false, message: 'Job ad not found' });
     }
 
-    // Increment views
-    jobAd.views += 1;
-    await jobAd.save({ validateBeforeSave: false });
+    jobAd.views = jobAd.views + 1;
+    await jobAd.save();
 
-    const relatedJobs = await JobAd.find({
+    var relatedJobs = await JobAd.find({
       category: jobAd.category._id,
       _id: { $ne: jobAd._id },
       status: 'active'
-    })
-      .select('title slug company.name location jobType image createdAt')
-      .limit(5)
-      .sort('-createdAt');
+    }).select('title slug company.name location jobType image createdAt').limit(5).sort('-createdAt');
 
     res.status(200).json({
       success: true,
       message: 'Job ad fetched successfully',
-      data: { jobAd, relatedJobs }
+      data: { jobAd: jobAd, relatedJobs: relatedJobs }
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch job ad',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Failed to fetch job ad', error: error.message });
   }
 };
 
-// @desc    Update job ad
-// @route   PUT /api/v1/job-ads/:id
-// @access  Private (Admin)
-const updateJobAd = async (req, res) => {
+var updateJobAd = async function (req, res) {
   try {
-    let jobAd = await JobAd.findById(req.params.id);
-
+    var jobAd = await JobAd.findById(req.params.id);
     if (!jobAd) {
-      return res.status(404).json({
-        success: false,
-        message: 'Job ad not found'
-      });
+      return res.status(404).json({ success: false, message: 'Job ad not found' });
     }
 
-    let updateData = { ...req.body };
+    var updateData = Object.assign({}, req.body);
 
-    // Parse nested objects if they come as strings
     if (typeof updateData.source === 'string') updateData.source = JSON.parse(updateData.source);
     if (typeof updateData.company === 'string') updateData.company = JSON.parse(updateData.company);
     if (typeof updateData.location === 'string') updateData.location = JSON.parse(updateData.location);
@@ -312,63 +255,42 @@ const updateJobAd = async (req, res) => {
     if (typeof updateData.skills === 'string') updateData.skills = JSON.parse(updateData.skills);
     if (typeof updateData.tags === 'string') updateData.tags = JSON.parse(updateData.tags);
 
-    // Handle main image upload
+    if (updateData.title) {
+      updateData.slug = createSlug(updateData.title);
+    }
+
     if (req.files && req.files.image && req.files.image[0]) {
       if (jobAd.image && jobAd.image.publicId) {
         await deleteFromCloudinary(jobAd.image.publicId);
       }
-      const result = await uploadFromBuffer(
-        req.files.image[0].buffer,
-        'job-ads-aggregator/job-ads'
-      );
-      updateData.image = {
-        url: result.secure_url,
-        publicId: result.public_id
-      };
+      var imgResult = await uploadFromBuffer(req.files.image[0].buffer, 'job-ads-aggregator/job-ads');
+      updateData.image = { url: imgResult.secure_url, publicId: imgResult.public_id };
     }
 
-    // Handle company logo upload
     if (req.files && req.files.companyLogo && req.files.companyLogo[0]) {
       if (jobAd.company && jobAd.company.logo && jobAd.company.logo.publicId) {
         await deleteFromCloudinary(jobAd.company.logo.publicId);
       }
-      const result = await uploadFromBuffer(
-        req.files.companyLogo[0].buffer,
-        'job-ads-aggregator/company-logos'
-      );
-      if (!updateData.company) updateData.company = { ...jobAd.company.toObject() };
-      updateData.company.logo = {
-        url: result.secure_url,
-        publicId: result.public_id
-      };
+      var logoRes = await uploadFromBuffer(req.files.companyLogo[0].buffer, 'job-ads-aggregator/company-logos');
+      if (!updateData.company) updateData.company = jobAd.company.toObject();
+      updateData.company.logo = { url: logoRes.secure_url, publicId: logoRes.public_id };
     }
 
-    // Handle gallery images upload (append to existing)
     if (req.files && req.files.gallery && req.files.gallery.length > 0) {
-      const newGalleryImages = [];
-      for (const file of req.files.gallery) {
-        const result = await uploadFromBuffer(
-          file.buffer,
-          'job-ads-aggregator/job-ads/gallery'
-        );
-        newGalleryImages.push({
-          url: result.secure_url,
-          publicId: result.public_id
-        });
+      var newGallery = [];
+      for (var g = 0; g < req.files.gallery.length; g++) {
+        var galResult = await uploadFromBuffer(req.files.gallery[g].buffer, 'job-ads-aggregator/job-ads/gallery');
+        newGallery.push({ url: galResult.secure_url, publicId: galResult.public_id });
       }
-      updateData.gallery = [...(jobAd.gallery || []), ...newGalleryImages];
+      updateData.gallery = (jobAd.gallery || []).concat(newGallery);
     }
 
-    const oldCategory = jobAd.category;
+    var oldCategory = jobAd.category;
 
-    jobAd = await JobAd.findByIdAndUpdate(req.params.id, updateData, {
-      new: true,
-      runValidators: true
-    })
+    jobAd = await JobAd.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true })
       .populate('category', 'name slug')
       .populate('postedBy', 'name email');
 
-    // Update category job counts if category changed
     if (updateData.category && updateData.category.toString() !== oldCategory.toString()) {
       await updateCategoryJobCount(oldCategory);
       await updateCategoryJobCount(updateData.category);
@@ -377,32 +299,20 @@ const updateJobAd = async (req, res) => {
     res.status(200).json({
       success: true,
       message: 'Job ad updated successfully',
-      data: { jobAd }
+      data: { jobAd: jobAd }
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to update job ad',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Failed to update job ad', error: error.message });
   }
 };
 
-// @desc    Delete job ad
-// @route   DELETE /api/v1/job-ads/:id
-// @access  Private (Admin)
-const deleteJobAd = async (req, res) => {
+var deleteJobAd = async function (req, res) {
   try {
-    const jobAd = await JobAd.findById(req.params.id);
-
+    var jobAd = await JobAd.findById(req.params.id);
     if (!jobAd) {
-      return res.status(404).json({
-        success: false,
-        message: 'Job ad not found'
-      });
+      return res.status(404).json({ success: false, message: 'Job ad not found' });
     }
 
-    // Delete images from cloudinary
     if (jobAd.image && jobAd.image.publicId) {
       await deleteFromCloudinary(jobAd.image.publicId);
     }
@@ -410,124 +320,77 @@ const deleteJobAd = async (req, res) => {
       await deleteFromCloudinary(jobAd.company.logo.publicId);
     }
     if (jobAd.gallery && jobAd.gallery.length > 0) {
-      for (const img of jobAd.gallery) {
-        if (img.publicId) await deleteFromCloudinary(img.publicId);
+      for (var d = 0; d < jobAd.gallery.length; d++) {
+        if (jobAd.gallery[d].publicId) await deleteFromCloudinary(jobAd.gallery[d].publicId);
       }
     }
 
-    const categoryId = jobAd.category;
+    var categoryId = jobAd.category;
     await JobAd.findByIdAndDelete(req.params.id);
-
-    // Update category job count
     await updateCategoryJobCount(categoryId);
 
-    res.status(200).json({
-      success: true,
-      message: 'Job ad deleted successfully'
-    });
+    res.status(200).json({ success: true, message: 'Job ad deleted successfully' });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to delete job ad',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Failed to delete job ad', error: error.message });
   }
 };
 
-// @desc    Delete gallery image from job ad
-// @route   DELETE /api/v1/job-ads/:id/gallery/:publicId
-// @access  Private (Admin)
-const deleteGalleryImage = async (req, res) => {
+var deleteGalleryImage = async function (req, res) {
   try {
-    const jobAd = await JobAd.findById(req.params.id);
-
+    var jobAd = await JobAd.findById(req.params.id);
     if (!jobAd) {
-      return res.status(404).json({
-        success: false,
-        message: 'Job ad not found'
-      });
+      return res.status(404).json({ success: false, message: 'Job ad not found' });
     }
 
-    const publicId = req.params.publicId;
-
-    // Find and remove the image from gallery
-    const imageIndex = jobAd.gallery.findIndex(
-      (img) => img.publicId === publicId || img.publicId.endsWith(publicId)
-    );
+    var publicId = req.params.publicId;
+    var imageIndex = -1;
+    for (var i = 0; i < jobAd.gallery.length; i++) {
+      if (jobAd.gallery[i].publicId === publicId || jobAd.gallery[i].publicId.endsWith(publicId)) {
+        imageIndex = i;
+        break;
+      }
+    }
 
     if (imageIndex === -1) {
-      return res.status(404).json({
-        success: false,
-        message: 'Gallery image not found'
-      });
+      return res.status(404).json({ success: false, message: 'Gallery image not found' });
     }
 
-    // Delete from cloudinary
     await deleteFromCloudinary(jobAd.gallery[imageIndex].publicId);
-
-    // Remove from array
     jobAd.gallery.splice(imageIndex, 1);
     await jobAd.save();
 
-    res.status(200).json({
-      success: true,
-      message: 'Gallery image deleted successfully',
-      data: { gallery: jobAd.gallery }
-    });
+    res.status(200).json({ success: true, message: 'Gallery image deleted successfully', data: { gallery: jobAd.gallery } });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to delete gallery image',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Failed to delete gallery image', error: error.message });
   }
 };
 
-// @desc    Toggle job ad status
-// @route   PATCH /api/v1/job-ads/:id/toggle-status
-// @access  Private (Admin)
-const toggleJobAdStatus = async (req, res) => {
+var toggleJobAdStatus = async function (req, res) {
   try {
-    const jobAd = await JobAd.findById(req.params.id);
-
+    var jobAd = await JobAd.findById(req.params.id);
     if (!jobAd) {
-      return res.status(404).json({
-        success: false,
-        message: 'Job ad not found'
-      });
+      return res.status(404).json({ success: false, message: 'Job ad not found' });
     }
 
     jobAd.status = jobAd.status === 'active' ? 'inactive' : 'active';
     await jobAd.save();
-
     await updateCategoryJobCount(jobAd.category);
 
     res.status(200).json({
       success: true,
-      message: `Job ad ${jobAd.status === 'active' ? 'activated' : 'deactivated'} successfully`,
-      data: { jobAd }
+      message: 'Job ad ' + (jobAd.status === 'active' ? 'activated' : 'deactivated') + ' successfully',
+      data: { jobAd: jobAd }
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to toggle job ad status',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Failed to toggle job ad status', error: error.message });
   }
 };
 
-// @desc    Toggle featured status
-// @route   PATCH /api/v1/job-ads/:id/toggle-featured
-// @access  Private (Admin)
-const toggleFeatured = async (req, res) => {
+var toggleFeatured = async function (req, res) {
   try {
-    const jobAd = await JobAd.findById(req.params.id);
-
+    var jobAd = await JobAd.findById(req.params.id);
     if (!jobAd) {
-      return res.status(404).json({
-        success: false,
-        message: 'Job ad not found'
-      });
+      return res.status(404).json({ success: false, message: 'Job ad not found' });
     }
 
     jobAd.isFeatured = !jobAd.isFeatured;
@@ -535,198 +398,127 @@ const toggleFeatured = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: `Job ad ${jobAd.isFeatured ? 'featured' : 'unfeatured'} successfully`,
-      data: { jobAd }
+      message: 'Job ad ' + (jobAd.isFeatured ? 'featured' : 'unfeatured') + ' successfully',
+      data: { jobAd: jobAd }
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to toggle featured status',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Failed to toggle featured status', error: error.message });
   }
 };
 
-// @desc    Get featured job ads
-// @route   GET /api/v1/job-ads/featured
-// @access  Public
-const getFeaturedJobAds = async (req, res) => {
+var getFeaturedJobAds = async function (req, res) {
   try {
-    const limit = parseInt(req.query.limit, 10) || 10;
-
-    const jobAds = await JobAd.find({ isFeatured: true, status: 'active' })
+    var limit = parseInt(req.query.limit, 10) || 10;
+    var jobAds = await JobAd.find({ isFeatured: true, status: 'active' })
       .populate('category', 'name slug icon')
       .sort('-createdAt')
       .limit(limit);
 
-    res.status(200).json({
-      success: true,
-      message: 'Featured job ads fetched successfully',
-      count: jobAds.length,
-      data: { jobAds }
-    });
+    res.status(200).json({ success: true, message: 'Featured job ads fetched', count: jobAds.length, data: { jobAds: jobAds } });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch featured job ads',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Failed to fetch featured job ads', error: error.message });
   }
 };
 
-// @desc    Get latest job ads
-// @route   GET /api/v1/job-ads/latest
-// @access  Public
-const getLatestJobAds = async (req, res) => {
+var getLatestJobAds = async function (req, res) {
   try {
-    const limit = parseInt(req.query.limit, 10) || 10;
-
-    const jobAds = await JobAd.find({ status: 'active' })
+    var limit = parseInt(req.query.limit, 10) || 10;
+    var jobAds = await JobAd.find({ status: 'active' })
       .populate('category', 'name slug icon')
       .sort('-createdAt')
       .limit(limit);
 
-    res.status(200).json({
-      success: true,
-      message: 'Latest job ads fetched successfully',
-      count: jobAds.length,
-      data: { jobAds }
-    });
+    res.status(200).json({ success: true, message: 'Latest job ads fetched', count: jobAds.length, data: { jobAds: jobAds } });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch latest job ads',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Failed to fetch latest job ads', error: error.message });
   }
 };
 
-// @desc    Bulk update status
-// @route   PATCH /api/v1/job-ads/bulk-status
-// @access  Private (Admin)
-const bulkUpdateStatus = async (req, res) => {
+var bulkUpdateStatus = async function (req, res) {
   try {
-    const { ids, status } = req.body;
+    var ids = req.body.ids;
+    var status = req.body.status;
 
     if (!ids || !Array.isArray(ids) || ids.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide an array of job ad IDs'
-      });
+      return res.status(400).json({ success: false, message: 'Please provide an array of job ad IDs' });
     }
 
-    if (!['active', 'inactive', 'expired', 'draft'].includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid status value'
-      });
+    if (['active', 'inactive', 'expired', 'draft'].indexOf(status) === -1) {
+      return res.status(400).json({ success: false, message: 'Invalid status value' });
     }
 
-    const result = await JobAd.updateMany(
-      { _id: { $in: ids } },
-      { status },
-      { runValidators: true }
-    );
+    var result = await JobAd.updateMany({ _id: { $in: ids } }, { status: status }, { runValidators: true });
 
-    // Update category counts for affected jobs
-    const affectedJobs = await JobAd.find({ _id: { $in: ids } }).select('category');
-    const categoryIds = [...new Set(affectedJobs.map((j) => j.category.toString()))];
-    for (const catId of categoryIds) {
-      await updateCategoryJobCount(catId);
-    }
-
-    res.status(200).json({
-      success: true,
-      message: `${result.modifiedCount} job ad(s) updated to "${status}"`,
-      data: { modifiedCount: result.modifiedCount }
+    var affectedJobs = await JobAd.find({ _id: { $in: ids } }).select('category');
+    var categoryIds = [];
+    affectedJobs.forEach(function (j) {
+      var catId = j.category.toString();
+      if (categoryIds.indexOf(catId) === -1) categoryIds.push(catId);
     });
+    for (var c = 0; c < categoryIds.length; c++) {
+      await updateCategoryJobCount(categoryIds[c]);
+    }
+
+    res.status(200).json({ success: true, message: result.modifiedCount + ' job ad(s) updated', data: { modifiedCount: result.modifiedCount } });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to bulk update status',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Failed to bulk update status', error: error.message });
   }
 };
 
-// @desc    Bulk delete job ads
-// @route   DELETE /api/v1/job-ads/bulk-delete
-// @access  Private (Admin)
-const bulkDelete = async (req, res) => {
+var bulkDelete = async function (req, res) {
   try {
-    const { ids } = req.body;
-
+    var ids = req.body.ids;
     if (!ids || !Array.isArray(ids) || ids.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please provide an array of job ad IDs'
-      });
+      return res.status(400).json({ success: false, message: 'Please provide an array of job ad IDs' });
     }
 
-    // Get all jobs to delete their images
-    const jobAds = await JobAd.find({ _id: { $in: ids } });
+    var jobAds = await JobAd.find({ _id: { $in: ids } });
 
-    // Delete images from cloudinary
-    for (const jobAd of jobAds) {
-      if (jobAd.image && jobAd.image.publicId) {
-        await deleteFromCloudinary(jobAd.image.publicId).catch(() => {});
+    for (var j = 0; j < jobAds.length; j++) {
+      if (jobAds[j].image && jobAds[j].image.publicId) {
+        await deleteFromCloudinary(jobAds[j].image.publicId).catch(function () {});
       }
-      if (jobAd.company && jobAd.company.logo && jobAd.company.logo.publicId) {
-        await deleteFromCloudinary(jobAd.company.logo.publicId).catch(() => {});
+      if (jobAds[j].company && jobAds[j].company.logo && jobAds[j].company.logo.publicId) {
+        await deleteFromCloudinary(jobAds[j].company.logo.publicId).catch(function () {});
       }
-      if (jobAd.gallery) {
-        for (const img of jobAd.gallery) {
-          if (img.publicId) await deleteFromCloudinary(img.publicId).catch(() => {});
+      if (jobAds[j].gallery) {
+        for (var g = 0; g < jobAds[j].gallery.length; g++) {
+          if (jobAds[j].gallery[g].publicId) await deleteFromCloudinary(jobAds[j].gallery[g].publicId).catch(function () {});
         }
       }
     }
 
-    // Get category IDs before deletion
-    const categoryIds = [...new Set(jobAds.map((j) => j.category.toString()))];
+    var categoryIds = [];
+    jobAds.forEach(function (j) {
+      var catId = j.category.toString();
+      if (categoryIds.indexOf(catId) === -1) categoryIds.push(catId);
+    });
 
-    const result = await JobAd.deleteMany({ _id: { $in: ids } });
+    var result = await JobAd.deleteMany({ _id: { $in: ids } });
 
-    // Update category counts
-    for (const catId of categoryIds) {
-      await updateCategoryJobCount(catId);
+    for (var c = 0; c < categoryIds.length; c++) {
+      await updateCategoryJobCount(categoryIds[c]);
     }
 
-    res.status(200).json({
-      success: true,
-      message: `${result.deletedCount} job ad(s) deleted successfully`,
-      data: { deletedCount: result.deletedCount }
-    });
+    res.status(200).json({ success: true, message: result.deletedCount + ' job ad(s) deleted', data: { deletedCount: result.deletedCount } });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to bulk delete job ads',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Failed to bulk delete job ads', error: error.message });
   }
 };
 
-// Helper function to update category job count
-const updateCategoryJobCount = async (categoryId) => {
-  const count = await JobAd.countDocuments({ 
-    category: categoryId, 
-    status: 'active' 
-  });
-  await Category.findByIdAndUpdate(categoryId, { jobCount: count });
-};
-
 module.exports = {
-  createJobAd,
-  getAllJobAds,
-  getJobAdsByCategory,
-  getJobAdById,
-  getJobAdBySlug,
-  updateJobAd,
-  deleteJobAd,
-  deleteGalleryImage,
-  toggleJobAdStatus,
-  toggleFeatured,
-  getFeaturedJobAds,
-  getLatestJobAds,
-  bulkUpdateStatus,
-  bulkDelete
+  createJobAd: createJobAd,
+  getAllJobAds: getAllJobAds,
+  getJobAdsByCategory: getJobAdsByCategory,
+  getJobAdById: getJobAdById,
+  getJobAdBySlug: getJobAdBySlug,
+  updateJobAd: updateJobAd,
+  deleteJobAd: deleteJobAd,
+  deleteGalleryImage: deleteGalleryImage,
+  toggleJobAdStatus: toggleJobAdStatus,
+  toggleFeatured: toggleFeatured,
+  getFeaturedJobAds: getFeaturedJobAds,
+  getLatestJobAds: getLatestJobAds,
+  bulkUpdateStatus: bulkUpdateStatus,
+  bulkDelete: bulkDelete
 };

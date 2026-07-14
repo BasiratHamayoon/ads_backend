@@ -2,17 +2,29 @@ const Category = require('../models/Category');
 const JobAd = require('../models/JobAd');
 const { uploadFromBuffer, deleteFromCloudinary } = require('../config/cloudinary');
 
-// @desc    Create category
-// @route   POST /api/v1/categories
-// @access  Private (Admin)
-const createCategory = async (req, res) => {
-  try {
-    const { name, description, icon, sortOrder } = req.body;
+function createSlug(text) {
+  return text
+    .toString()
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^\w\-]+/g, '')
+    .replace(/\-\-+/g, '-')
+    .replace(/^-+/, '')
+    .replace(/-+$/, '');
+}
 
-    // Check if category already exists
-    const existingCategory = await Category.findOne({ 
-      name: { $regex: new RegExp(`^${name}$`, 'i') } 
+var createCategory = async function (req, res) {
+  try {
+    var name = req.body.name;
+    var description = req.body.description;
+    var icon = req.body.icon;
+    var sortOrder = req.body.sortOrder;
+
+    var existingCategory = await Category.findOne({
+      name: { $regex: new RegExp('^' + name + '$', 'i') }
     });
+
     if (existingCategory) {
       return res.status(400).json({
         success: false,
@@ -20,29 +32,36 @@ const createCategory = async (req, res) => {
       });
     }
 
-    const categoryData = {
-      name,
-      description,
-      icon,
-      sortOrder,
+    var slug = createSlug(name);
+
+    var existingSlug = await Category.findOne({ slug: slug });
+    if (existingSlug) {
+      slug = slug + '-' + Date.now();
+    }
+
+    var categoryData = {
+      name: name,
+      slug: slug,
+      description: description || '',
+      icon: icon || '',
+      sortOrder: sortOrder || 0,
       createdBy: req.admin._id
     };
 
-    // Handle image upload
     if (req.file) {
-      const result = await uploadFromBuffer(req.file.buffer, 'job-ads-aggregator/categories');
+      var result = await uploadFromBuffer(req.file.buffer, 'job-ads-aggregator/categories');
       categoryData.image = {
         url: result.secure_url,
         publicId: result.public_id
       };
     }
 
-    const category = await Category.create(categoryData);
+    var category = await Category.create(categoryData);
 
     res.status(201).json({
       success: true,
       message: 'Category created successfully',
-      data: { category }
+      data: { category: category }
     });
   } catch (error) {
     res.status(500).json({
@@ -53,34 +72,31 @@ const createCategory = async (req, res) => {
   }
 };
 
-// @desc    Get all categories
-// @route   GET /api/v1/categories
-// @access  Public
-const getAllCategories = async (req, res) => {
+var getAllCategories = async function (req, res) {
   try {
-    const { active, sort } = req.query;
+    var active = req.query.active;
+    var sort = req.query.sort;
 
-    let query = {};
+    var query = {};
     if (active === 'true') query.isActive = true;
     if (active === 'false') query.isActive = false;
 
-    let sortOption = { sortOrder: 1, name: 1 };
+    var sortOption = { sortOrder: 1, name: 1 };
     if (sort === 'name') sortOption = { name: 1 };
     if (sort === '-name') sortOption = { name: -1 };
     if (sort === 'jobCount') sortOption = { jobCount: -1 };
 
-    const categories = await Category.find(query)
+    var categories = await Category.find(query)
       .sort(sortOption)
       .populate('createdBy', 'name email');
 
-    // Get job counts for each category
-    const categoriesWithCounts = await Promise.all(
-      categories.map(async (cat) => {
-        const jobCount = await JobAd.countDocuments({ 
-          category: cat._id, 
-          status: 'active' 
+    var categoriesWithCounts = await Promise.all(
+      categories.map(async function (cat) {
+        var jobCount = await JobAd.countDocuments({
+          category: cat._id,
+          status: 'active'
         });
-        const catObj = cat.toObject();
+        var catObj = cat.toObject();
         catObj.jobCount = jobCount;
         return catObj;
       })
@@ -101,12 +117,9 @@ const getAllCategories = async (req, res) => {
   }
 };
 
-// @desc    Get single category
-// @route   GET /api/v1/categories/:id
-// @access  Public
-const getCategoryById = async (req, res) => {
+var getCategoryById = async function (req, res) {
   try {
-    const category = await Category.findById(req.params.id)
+    var category = await Category.findById(req.params.id)
       .populate('createdBy', 'name email');
 
     if (!category) {
@@ -116,13 +129,12 @@ const getCategoryById = async (req, res) => {
       });
     }
 
-    // Get job count
-    const jobCount = await JobAd.countDocuments({ 
-      category: category._id, 
-      status: 'active' 
+    var jobCount = await JobAd.countDocuments({
+      category: category._id,
+      status: 'active'
     });
 
-    const categoryObj = category.toObject();
+    var categoryObj = category.toObject();
     categoryObj.jobCount = jobCount;
 
     res.status(200).json({
@@ -139,12 +151,9 @@ const getCategoryById = async (req, res) => {
   }
 };
 
-// @desc    Get category by slug
-// @route   GET /api/v1/categories/slug/:slug
-// @access  Public
-const getCategoryBySlug = async (req, res) => {
+var getCategoryBySlug = async function (req, res) {
   try {
-    const category = await Category.findOne({ slug: req.params.slug })
+    var category = await Category.findOne({ slug: req.params.slug })
       .populate('createdBy', 'name email');
 
     if (!category) {
@@ -154,12 +163,12 @@ const getCategoryBySlug = async (req, res) => {
       });
     }
 
-    const jobCount = await JobAd.countDocuments({ 
-      category: category._id, 
-      status: 'active' 
+    var jobCount = await JobAd.countDocuments({
+      category: category._id,
+      status: 'active'
     });
 
-    const categoryObj = category.toObject();
+    var categoryObj = category.toObject();
     categoryObj.jobCount = jobCount;
 
     res.status(200).json({
@@ -176,12 +185,9 @@ const getCategoryBySlug = async (req, res) => {
   }
 };
 
-// @desc    Update category
-// @route   PUT /api/v1/categories/:id
-// @access  Private (Admin)
-const updateCategory = async (req, res) => {
+var updateCategory = async function (req, res) {
   try {
-    let category = await Category.findById(req.params.id);
+    var category = await Category.findById(req.params.id);
 
     if (!category) {
       return res.status(404).json({
@@ -190,16 +196,32 @@ const updateCategory = async (req, res) => {
       });
     }
 
-    const updateData = { ...req.body };
+    var updateData = {};
 
-    // Handle image upload
+    if (req.body.name) {
+      updateData.name = req.body.name;
+      updateData.slug = createSlug(req.body.name);
+
+      var existingSlug = await Category.findOne({
+        slug: updateData.slug,
+        _id: { $ne: req.params.id }
+      });
+      if (existingSlug) {
+        updateData.slug = updateData.slug + '-' + Date.now();
+      }
+    }
+
+    if (req.body.description !== undefined) updateData.description = req.body.description;
+    if (req.body.icon !== undefined) updateData.icon = req.body.icon;
+    if (req.body.sortOrder !== undefined) updateData.sortOrder = req.body.sortOrder;
+    if (req.body.isActive !== undefined) updateData.isActive = req.body.isActive;
+
     if (req.file) {
-      // Delete old image from cloudinary
       if (category.image && category.image.publicId) {
         await deleteFromCloudinary(category.image.publicId);
       }
 
-      const result = await uploadFromBuffer(req.file.buffer, 'job-ads-aggregator/categories');
+      var result = await uploadFromBuffer(req.file.buffer, 'job-ads-aggregator/categories');
       updateData.image = {
         url: result.secure_url,
         publicId: result.public_id
@@ -214,7 +236,7 @@ const updateCategory = async (req, res) => {
     res.status(200).json({
       success: true,
       message: 'Category updated successfully',
-      data: { category }
+      data: { category: category }
     });
   } catch (error) {
     res.status(500).json({
@@ -225,12 +247,9 @@ const updateCategory = async (req, res) => {
   }
 };
 
-// @desc    Delete category
-// @route   DELETE /api/v1/categories/:id
-// @access  Private (Admin)
-const deleteCategory = async (req, res) => {
+var deleteCategory = async function (req, res) {
   try {
-    const category = await Category.findById(req.params.id);
+    var category = await Category.findById(req.params.id);
 
     if (!category) {
       return res.status(404).json({
@@ -239,16 +258,14 @@ const deleteCategory = async (req, res) => {
       });
     }
 
-    // Check if there are jobs in this category
-    const jobCount = await JobAd.countDocuments({ category: category._id });
+    var jobCount = await JobAd.countDocuments({ category: category._id });
     if (jobCount > 0) {
       return res.status(400).json({
         success: false,
-        message: `Cannot delete category. It has ${jobCount} job ad(s). Move or delete them first.`
+        message: 'Cannot delete category. It has ' + jobCount + ' job ad(s). Move or delete them first.'
       });
     }
 
-    // Delete image from cloudinary
     if (category.image && category.image.publicId) {
       await deleteFromCloudinary(category.image.publicId);
     }
@@ -268,12 +285,9 @@ const deleteCategory = async (req, res) => {
   }
 };
 
-// @desc    Toggle category active status
-// @route   PATCH /api/v1/categories/:id/toggle-status
-// @access  Private (Admin)
-const toggleCategoryStatus = async (req, res) => {
+var toggleCategoryStatus = async function (req, res) {
   try {
-    const category = await Category.findById(req.params.id);
+    var category = await Category.findById(req.params.id);
 
     if (!category) {
       return res.status(404).json({
@@ -287,8 +301,8 @@ const toggleCategoryStatus = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: `Category ${category.isActive ? 'activated' : 'deactivated'} successfully`,
-      data: { category }
+      message: 'Category ' + (category.isActive ? 'activated' : 'deactivated') + ' successfully',
+      data: { category: category }
     });
   } catch (error) {
     res.status(500).json({
@@ -300,11 +314,11 @@ const toggleCategoryStatus = async (req, res) => {
 };
 
 module.exports = {
-  createCategory,
-  getAllCategories,
-  getCategoryById,
-  getCategoryBySlug,
-  updateCategory,
-  deleteCategory,
-  toggleCategoryStatus
+  createCategory: createCategory,
+  getAllCategories: getAllCategories,
+  getCategoryById: getCategoryById,
+  getCategoryBySlug: getCategoryBySlug,
+  updateCategory: updateCategory,
+  deleteCategory: deleteCategory,
+  toggleCategoryStatus: toggleCategoryStatus
 };
