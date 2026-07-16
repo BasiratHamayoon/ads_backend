@@ -24,21 +24,56 @@ const { errorHandler, notFound } = require('./middlewares/errorHandler');
 
 const app = express();
 
+var allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:3002',
+  'http://localhost:4000',
+  'http://localhost:5173',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001',
+  'http://127.0.0.1:3002'
+];
+
+if (process.env.FRONTEND_URL) {
+  allowedOrigins.push(process.env.FRONTEND_URL);
+}
+
+if (process.env.ADMIN_URL) {
+  allowedOrigins.push(process.env.ADMIN_URL);
+}
+
+if (process.env.USER_URL) {
+  allowedOrigins.push(process.env.USER_URL);
+}
+
+var corsOptions = {
+  origin: function (origin, callback) {
+    return callback(null, true);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  preflightContinue: false,
+  optionsSuccessStatus: 204
+};
+
+app.use(cors(corsOptions));
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-app.use(helmet());
-app.use(hpp());
-app.use(cors({
-  origin: process.env.FRONTEND_URL || '*',
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  crossOriginOpenerPolicy: { policy: 'unsafe-none' }
 }));
+
+app.use(hpp());
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 200,
   message: {
     success: false,
     message: 'Too many requests from this IP, please try again after 15 minutes'
@@ -64,7 +99,7 @@ app.use(compression());
 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-app.get('/api/v1', (req, res) => {
+app.get('/api/v1', function (req, res) {
   res.status(200).json({
     success: true,
     message: 'Job Ads Aggregator API is running',
@@ -86,31 +121,16 @@ app.use('/api/v1/job-ads', jobAdRoutes);
 app.use('/api/v1/dashboard', dashboardRoutes);
 app.use('/api/v1/settings', settingsRoutes);
 app.use('/api/v1/contacts', contactRoutes);
-app.get('/api/v1/debug-delete-admin', async function (req, res) {
-  const Admin = require('./models/Admin');
-  await Admin.deleteMany({});
-  res.json({ message: 'All admins deleted. Now signup again.' });
-});
-app.get('/api/v1/debug-admin', async function (req, res) {
-  const Admin = require('./models/Admin');
-  const admin = await Admin.findOne({}).select('+password');
-  res.json({
-    adminExists: !!admin,
-    email: admin ? admin.email : null,
-    passwordHash: admin ? admin.password : null,
-    passwordLength: admin ? admin.password.length : 0,
-    startsWithDollar: admin ? admin.password.startsWith('$2') : false
-  });
-});
 
 app.use(notFound);
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
 
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, function () {
   console.log('Server running in ' + process.env.NODE_ENV + ' mode on port ' + PORT);
   console.log('API Base URL: http://localhost:' + PORT + '/api/v1');
+  console.log('Allowed Origins: ' + allowedOrigins.join(', '));
 });
 
 process.on('unhandledRejection', function (err) {
