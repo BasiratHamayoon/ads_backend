@@ -127,22 +127,23 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
 
-const server = app.listen(PORT, function () {
-  console.log('Server running in ' + process.env.NODE_ENV + ' mode on port ' + PORT);
-  console.log('API Base URL: http://localhost:' + PORT + '/api/v1');
-  console.log('Allowed Origins: ' + allowedOrigins.join(', '));
-});
+if (process.env.NODE_ENV !== 'production') {
+  const server = app.listen(PORT, function () {
+    console.log('Server running in ' + process.env.NODE_ENV + ' mode on port ' + PORT);
+    console.log('API Base URL: http://localhost:' + PORT + '/api/v1');
+  });
 
-process.on('unhandledRejection', function (err) {
-  console.log('Unhandled Rejection: ' + err.message);
-  server.close(function () {
+  process.on('unhandledRejection', function (err) {
+    console.log('Unhandled Rejection: ' + err.message);
+    server.close(function () {
+      process.exit(1);
+    });
+  });
+
+  process.on('uncaughtException', function (err) {
+    console.log('Uncaught Exception: ' + err.message);
     process.exit(1);
   });
-});
-
-process.on('uncaughtException', function (err) {
-  console.log('Uncaught Exception: ' + err.message);
-  process.exit(1);
-});
+}
 
 module.exports = app;
